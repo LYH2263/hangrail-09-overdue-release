@@ -126,12 +126,21 @@ def pickup(body: PickupRequest, db: Session = Depends(get_db)):
 @api_router.post("/overdue/scan", response_model=list[OrderOut])
 def overdue_scan(db: Session = Depends(get_db)):
     now = datetime.utcnow()
-    hung = db.scalars(select(WorkOrder).where(WorkOrder.status == "hung")).all()
     marked = []
+    hung = db.scalars(select(WorkOrder).where(WorkOrder.status == "hung")).all()
     for o in hung:
         if o.due_at < now:
+            # 已上杆且到期：标 overdue 的同时释放占位，腾出杆上厘米。
+            placements = db.scalars(
+                select(RailPlacement).where(
+                    RailPlacement.order_id == o.id, RailPlacement.active == 1
+                )
+            ).all()
+            for p in placements:
+                p.active = 0
             o.status = "overdue"
             marked.append(o)
+    # 仅到期、尚未上杆的工单只改状态，不涉及任何占位。
     ready = db.scalars(select(WorkOrder).where(WorkOrder.status == "ready")).all()
     for o in ready:
         if o.due_at < now:
